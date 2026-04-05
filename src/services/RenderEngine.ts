@@ -15,6 +15,9 @@ import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { RenderJobStatus } from "@/generated/prisma/enums";
 
+const RENDER_OUTPUT_BASE_URL =
+  process.env.RENDER_OUTPUT_BASE_URL ?? "https://renders.quantedits.io";
+
 const log = logger.child({ service: "RenderEngine" });
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -164,7 +167,7 @@ async function processRenderJob(
     }
 
     // Stub: pretend we produced an output file
-    const outputUrl = `https://renders.quantedits.io/${options.projectId}/${jobId}/output.${options.outputFormat ?? "mp4"}`;
+    const outputUrl = `${RENDER_OUTPUT_BASE_URL}/${options.projectId}/${jobId}/output.${options.outputFormat ?? "mp4"}`;
 
     await prisma.renderJob.update({
       where: { id: jobId },

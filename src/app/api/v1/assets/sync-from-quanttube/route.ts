@@ -132,6 +132,12 @@ async function fetchTrendingFromQuanttube(
     .slice(0, limit);
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function toBigInt(bytes: number | undefined): bigint | undefined {
+  return bytes !== undefined ? BigInt(bytes) : undefined;
+}
+
 // ── Route handler ─────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
@@ -205,7 +211,7 @@ export async function POST(request: NextRequest) {
         url: asset.url,
         thumbnailUrl: asset.thumbnailUrl,
         durationSec: asset.durationSec,
-        sizeBytes: asset.sizeBytes ? BigInt(asset.sizeBytes) : undefined,
+        sizeBytes: toBigInt(asset.sizeBytes),
         metadata: asset.metadata as object,
       },
       create: {
@@ -215,7 +221,7 @@ export async function POST(request: NextRequest) {
         url: asset.url,
         thumbnailUrl: asset.thumbnailUrl,
         durationSec: asset.durationSec,
-        sizeBytes: asset.sizeBytes ? BigInt(asset.sizeBytes) : undefined,
+        sizeBytes: toBigInt(asset.sizeBytes),
         metadata: asset.metadata as object,
         source: AssetSource.QUANTTUBE_SYNC,
         quanttubeId: asset.id,

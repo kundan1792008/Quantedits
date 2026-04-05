@@ -63,7 +63,7 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: 1
           # Dummy values so Prisma/Next.js build without a live DB
-          DATABASE_URL: postgresql://user:pass@localhost:5432/quantedits
+          DATABASE_URL: postgresql://dummy:dummy@dummy:5432/quantedits
           QUANTMAIL_JWT_SECRET: ci-secret
 
   docker:

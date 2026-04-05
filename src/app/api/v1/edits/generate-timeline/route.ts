@@ -181,6 +181,25 @@ function generateTimelineFromPrompt(
   };
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+/**
+ * Return an existing project or create a new one for the given user.
+ */
+async function getOrCreateProject(
+  userId: string,
+  projectId: string | undefined,
+  title: string,
+): Promise<string> {
+  if (projectId) {
+    return projectId;
+  }
+  const project = await prisma.project.create({
+    data: { title, userId },
+  });
+  return project.id;
+}
+
 // ── Route handler ─────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
@@ -247,18 +266,15 @@ export async function POST(request: NextRequest) {
   const timelineData = generateTimelineFromPrompt(prompt, durationSec);
 
   // Persist to database
+  const resolvedProjectId = await getOrCreateProject(
+    jwtPayload.sub,
+    projectId,
+    prompt.slice(0, 80),
+  );
+
   const timeline = await prisma.timeline.create({
     data: {
-      projectId:
-        projectId ??
-        (
-          await prisma.project.create({
-            data: {
-              title: prompt.slice(0, 80),
-              userId: jwtPayload.sub,
-            },
-          })
-        ).id,
+      projectId: resolvedProjectId,
       prompt,
       data: timelineData as object,
     },
