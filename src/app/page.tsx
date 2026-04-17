@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Video, X } from "lucide-react";
 import Topbar from "@/components/Topbar";
@@ -12,15 +12,24 @@ import ReelCapture from "@/components/ReelCapture";
 import Timeline from "@/components/Timeline";
 import WebGLTimeline from "@/components/WebGLTimeline";
 import GenerativePipelinePanel from "@/components/GenerativePipelinePanel";
+import CreationAddictionPanel from "@/components/CreationAddictionPanel";
+import type { DraftRecord } from "@/services/CreationAddiction";
 
 export default function Home() {
   const [droppedFile, setDroppedFile] = useState<DroppedFile | null>(null);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [playheadFraction, setPlayheadFraction] = useState(0);
 
+  const [draftTimestamps, setDraftTimestamps] = useState<{
+    createdAt: number;
+    editedAt: number;
+  } | null>(null);
+
   const handleFileDrop = useCallback((file: DroppedFile) => {
     setDroppedFile(file);
     setHighlights([]);
+    const stamp = Date.now();
+    setDraftTimestamps({ createdAt: stamp, editedAt: stamp });
   }, []);
 
   // Revoke object URL when droppedFile changes or component unmounts
@@ -34,7 +43,81 @@ export default function Home() {
   const handleClearFile = () => {
     setDroppedFile(null);
     setHighlights([]);
+    setDraftTimestamps(null);
   };
+
+  // ── Creation Addiction inputs (issue #14) ────────────────────────────
+  // Every surface in the Creation Addiction panel is driven from the same
+  // editor state tree, so the quality meter, suggestion engine, and social
+  // validation preview all react together as the project evolves.
+
+  const projectId = droppedFile?.file.name ?? "untitled-project";
+  const hasVideo = Boolean(droppedFile);
+  const clipCount = highlights.length > 0 ? highlights.length : hasVideo ? 1 : 0;
+  const durationSec = hasVideo ? 42 : 0;
+
+  const editorContext = useMemo(
+    () => ({
+      durationSec,
+      clipCount,
+      hasMusic: false,
+      hasColorGrade: false,
+      hasGenerativeEffects: false,
+      sceneEnergy: 0.62,
+      audioBpm: 0,
+      playheadFraction,
+      projectId,
+    }),
+    [durationSec, clipCount, playheadFraction, projectId],
+  );
+
+  const qualityInputs = useMemo(
+    () => ({
+      clipCount,
+      durationSec,
+      hasMusic: false,
+      hasCaptions: false,
+      hasColorGrade: false,
+      hasTransitions: highlights.length > 1,
+      hasTitles: false,
+      hasGrain: false,
+      hasHookMoment: highlights.length > 0,
+      hasGenerativeEffects: false,
+      paceVariance: 0.45,
+      acceptedSuggestions: 0,
+    }),
+    [clipCount, durationSec, highlights.length],
+  );
+
+  const predictionInputs = useMemo(
+    () => ({
+      qualityScore: 92,
+      durationSec: Math.max(12, durationSec),
+      category: "viral-trend" as const,
+      followers: 1_250,
+      templateBoost: 1.15,
+      exportHour: 18,
+      exportDow: 5,
+      hasCaptions: false,
+      hasMusic: false,
+    }),
+    [durationSec],
+  );
+
+  const drafts = useMemo<DraftRecord[]>(() => {
+    if (!hasVideo || !draftTimestamps) return [];
+    return [
+      {
+        id: projectId,
+        title: droppedFile?.file.name ?? "Untitled edit",
+        lastEditedAt: draftTimestamps.editedAt,
+        createdAt: draftTimestamps.createdAt,
+        published: false,
+        qualityScore: 92,
+      },
+    ];
+  }, [droppedFile, hasVideo, projectId, draftTimestamps]);
+
 
   return (
     <div
@@ -242,6 +325,20 @@ export default function Home() {
           </div>
 
           <div className="p-4">
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+              className="mb-4"
+            >
+              <CreationAddictionPanel
+                editor={editorContext}
+                quality={qualityInputs}
+                prediction={predictionInputs}
+                drafts={drafts}
+              />
+            </motion.div>
+
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
