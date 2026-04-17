@@ -229,12 +229,22 @@ public class NPUEnginePlugin: CAPPlugin, CAPBridgedPlugin {
             // to avoid per-element NSNumber boxing overhead.
             let count = shapeArray.reduce(1, *)
             let multiArray = try MLMultiArray(shape: nsShape as [NSNumber], dataType: .float32)
+
+            var copyError: Error? = nil
             data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
-                guard let src = ptr.baseAddress else { return }
+                guard let src = ptr.baseAddress else {
+                    copyError = NSError(
+                        domain: "NPUEngine",
+                        code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "Tensor data base address is nil for input '\(name)'"]
+                    )
+                    return
+                }
                 let dst = multiArray.dataPointer
                 let byteCount = min(count * MemoryLayout<Float32>.size, data.count)
                 memcpy(dst, src, byteCount)
             }
+            if let err = copyError { throw err }
 
             features[name] = MLFeatureValue(multiArray: multiArray)
         }

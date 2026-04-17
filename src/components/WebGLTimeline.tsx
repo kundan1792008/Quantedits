@@ -311,8 +311,8 @@ export default function WebGLTimeline({
 
       // Keep canvas pixel dimensions in sync with CSS layout
       const dpr = window.devicePixelRatio || 1;
-      const cw  = canvas.clientWidth  * dpr | 0;
-      const ch  = canvas.clientHeight * dpr | 0;
+      const cw  = Math.floor(canvas.clientWidth  * dpr);
+      const ch  = Math.floor(canvas.clientHeight * dpr);
       if (canvas.width !== cw || canvas.height !== ch) {
         canvas.width  = cw;
         canvas.height = ch;

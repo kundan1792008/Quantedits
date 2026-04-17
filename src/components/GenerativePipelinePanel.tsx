@@ -59,14 +59,24 @@ export default function GenerativePipelinePanel() {
     if (!result || result.framesBase64.length === 0) return;
     framesRef.current = result.framesBase64;
 
+    // Advance frame index at ~24 fps, driven by requestAnimationFrame so the
+    // loop automatically pauses when the tab is hidden (no wasted CPU/GPU).
+    const fps = 24;
+    const frameDurationMs = 1000 / fps;
+    let lastTimestamp = 0;
     let fi = 0;
-    const tick = () => {
-      fi = (fi + 1) % framesRef.current.length;
-      setFrameIndex(fi);
-      animFrameRef.current = window.setTimeout(tick, 1000 / 24) as unknown as number;
+
+    const tick = (timestamp: number) => {
+      if (timestamp - lastTimestamp >= frameDurationMs) {
+        fi = (fi + 1) % framesRef.current.length;
+        setFrameIndex(fi);
+        lastTimestamp = timestamp;
+      }
+      animFrameRef.current = requestAnimationFrame(tick);
     };
-    animFrameRef.current = window.setTimeout(tick, 1000 / 24) as unknown as number;
-    return () => clearTimeout(animFrameRef.current);
+
+    animFrameRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animFrameRef.current);
   }, [result]);
 
   // Render current frame to canvas

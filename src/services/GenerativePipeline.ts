@@ -245,6 +245,9 @@ export class GenerativePipeline {
     let diffusionSteps  = options.diffusionSteps ?? DEFAULT_DIFFUSION_STEPS;
     let latentSize      = DEFAULT_LATENT_SIZE;
 
+    if (this.currentPressure === "critical") {
+      throw new Error("Generation aborted: device memory is critically low.");
+    }
     if (this.currentPressure === "fair")    diffusionSteps = Math.min(diffusionSteps, 10);
     if (this.currentPressure === "serious") latentSize     = Math.floor(latentSize / 2);
 
@@ -414,11 +417,14 @@ export class GenerativePipeline {
       const predNoise = base64ToFloat32(
         result.outputs[0]?.dataBase64 ?? float32ToBase64(currentLatent),
       );
-      const alpha = 1.0 - sigmaT;
+      const alpha       = 1.0 - sigmaT;
+      // Precompute constants outside the inner loop to avoid redundant sqrt calls
+      const sqrtAlpha   = Math.sqrt(alpha);
+      const sqrtOneMinusAlpha = Math.sqrt(1 - alpha);
       for (let i = 0; i < currentLatent.length; i++) {
         currentLatent[i] =
-          Math.sqrt(alpha) * (currentLatent[i] - Math.sqrt(1 - alpha) * predNoise[i]) +
-          Math.sqrt(1 - alpha) * predNoise[i];
+          sqrtAlpha * (currentLatent[i] - sqrtOneMinusAlpha * predNoise[i]) +
+          sqrtOneMinusAlpha * predNoise[i];
       }
 
       onStep(step + 1);

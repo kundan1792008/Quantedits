@@ -210,7 +210,10 @@ class NPUEnginePlugin : Plugin() {
                 // val outputs = serializeOutputTensors(loaded.interpreter, outputMap)
                 // ----------------------------------------
 
-                // Stub: echo inputs as outputs (identity model)
+                // Stub: echo inputs as outputs (identity model).
+                // NOTE: With real TFLite the modelBuffer ByteBuffer is passed directly
+                // to the Interpreter constructor (no copy needed), and tensor I/O uses
+                // ByteBuffer objects as well — avoiding the heap copy below entirely.
                 val outputs = JSArray()
                 inputs.forEach { (name, buf) ->
                     // Use buf.get(byteArray) instead of buf.array() because
