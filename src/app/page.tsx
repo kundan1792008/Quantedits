@@ -10,6 +10,8 @@ import HookGenerator, { type Highlight } from "@/components/HookGenerator";
 import PublishRouter from "@/components/PublishRouter";
 import ReelCapture from "@/components/ReelCapture";
 import Timeline from "@/components/Timeline";
+import EngagementPanel from "@/components/EngagementPanel";
+import type { ProjectProbe } from "@/services/engagement/types";
 
 export default function Home() {
   const [droppedFile, setDroppedFile] = useState<DroppedFile | null>(null);
@@ -208,6 +210,27 @@ export default function Home() {
               transition={{ delay: 0.3 }}
             >
               <ReelCapture />
+            </motion.div>
+
+            {/* Engagement: honest quality, suggestions, streak, estimates, templates */}
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+            >
+              <EngagementPanel
+                probe={
+                  droppedFile
+                    ? ({
+                        projectId: "draft-" + droppedFile.file.name.slice(0, 8),
+                        hasAudio: true,
+                        hasTitle: droppedFile.file.name.length > 0,
+                        cutCount: highlights.length,
+                        hasIntroHook: highlights.length > 0,
+                      } satisfies ProjectProbe)
+                    : null
+                }
+              />
             </motion.div>
           </div>
         </div>

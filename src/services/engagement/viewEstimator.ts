@@ -69,12 +69,12 @@ export class ViewEstimator {
       qualityAdjustment = 0.8 + (q / 100) * 0.4;
     }
 
-    const centre = Math.round(median * qualityAdjustment);
+    const center = Math.round(median * qualityAdjustment);
     // Confidence band widens when sample size is small.
     const bandMultiplier =
       history.length >= 10 ? 1 : history.length >= 5 ? 1.5 : 2.2;
-    const low = Math.max(0, Math.round(centre - iqr * bandMultiplier));
-    const high = Math.round(centre + iqr * bandMultiplier);
+    const low = Math.max(0, Math.round(center - iqr * bandMultiplier));
+    const high = Math.round(center + iqr * bandMultiplier);
 
     const confidence: ViewEstimate["confidence"] =
       history.length >= 10 ? "high" : history.length >= 3 ? "medium" : "low";
@@ -89,7 +89,7 @@ export class ViewEstimator {
       `This is a projection from your own videos — actual views depend on platform ranking and timing, which we don't control.`;
 
     return {
-      median: centre,
+      median: center,
       low,
       high,
       confidence,
