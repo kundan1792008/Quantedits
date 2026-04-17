@@ -35,6 +35,7 @@ model Project {
   updatedAt   DateTime    @updatedAt
   timelines   Timeline[]
   renderJobs  RenderJob[]
+  exportJobs  ExportJob[]
 }
 
 enum ProjectStatus {
@@ -56,6 +57,7 @@ model Timeline {
   version     Int       @default(1)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  tracks      Track[]
 }
 
 // ── Assets ─────────────────────────────────────────────────────────────────
@@ -77,6 +79,7 @@ model Asset {
   quanttubeId  String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
+  clips        Clip[]
 
   @@unique([userId, quanttubeId])
 }
@@ -114,4 +117,136 @@ enum RenderJobStatus {
   PROCESSING
   DONE
   FAILED
+}
+
+// ── Tracks ──────────────────────────────────────────────────────────────────
+// A track belongs to a Timeline and holds ordered Clips.
+model Track {
+  id         String    @id @default(cuid())
+  timelineId String
+  timeline   Timeline  @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+  type       TrackType
+  name       String
+  index      Int       // display order (0-based)
+  muted      Boolean   @default(false)
+  solo       Boolean   @default(false)
+  locked     Boolean   @default(false)
+  volume     Float     @default(1.0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  clips      Clip[]
+}
+
+enum TrackType {
+  VIDEO
+  AUDIO
+  TEXT
+  AI_EFFECT
+}
+
+// ── Clips ───────────────────────────────────────────────────────────────────
+// A clip is a segment of media placed on a Track at a specific time.
+model Clip {
+  id         String     @id @default(cuid())
+  trackId    String
+  track      Track      @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  assetId    String?
+  asset      Asset?     @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  startSec   Float      // position on timeline (seconds from start)
+  endSec     Float      // end position on timeline
+  trimInSec  Float      @default(0) // trim from beginning of source
+  trimOutSec Float      @default(0) // trim from end of source
+  /// Arbitrary clip properties (opacity, speed, blend mode, text content, etc.)
+  properties Json       @default("{}")
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  keyframes  Keyframe[]
+  aiOps      AIOperation[]
+}
+
+// ── Keyframes ───────────────────────────────────────────────────────────────
+// Stores animated property values at specific points in time.
+model Keyframe {
+  id         String            @id @default(cuid())
+  clipId     String
+  clip       Clip              @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  property   String            // e.g. "opacity", "scale", "positionX"
+  timeSec    Float             // time relative to clip start
+  value      Float
+  easing     KeyframeEasing    @default(LINEAR)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+}
+
+enum KeyframeEasing {
+  LINEAR
+  EASE_IN
+  EASE_OUT
+  EASE_IN_OUT
+  BEZIER
+  STEP
+}
+
+// ── ExportJobs ──────────────────────────────────────────────────────────────
+// Tracks an async video export/render task for a project.
+model ExportJob {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  format      ExportFormat    @default(MP4)
+  resolution  ExportResolution @default(RES_1080P)
+  fps         Int             @default(30)
+  quality     Int             @default(80)  // 0-100
+  status      RenderJobStatus @default(QUEUED)
+  progress    Int             @default(0)   // 0-100
+  etaSec      Int?
+  outputUrl   String?
+  errorMsg    String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+enum ExportFormat {
+  MP4
+  WEBM
+  PRORES
+}
+
+enum ExportResolution {
+  RES_720P
+  RES_1080P
+  RES_4K
+  CUSTOM
+}
+
+// ── AIOperations ─────────────────────────────────────────────────────────────
+// Tracks an AI processing operation applied to a Clip or frame range.
+model AIOperation {
+  id          String         @id @default(cuid())
+  clipId      String
+  clip        Clip           @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  type        AIOperationType
+  status      RenderJobStatus @default(QUEUED)
+  progress    Int             @default(0)
+  /// Input parameters (prompt, styleId, factor, mask, etc.)
+  params      Json            @default("{}")
+  /// Output data (result URL, alpha matte URL, etc.)
+  result      Json?
+  startFrame  Int?
+  endFrame    Int?
+  errorMsg    String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+enum AIOperationType {
+  REMOVE_BACKGROUND
+  GENERATIVE_FILL
+  STYLE_TRANSFER
+  UPSCALE
+  AUTO_COLOR
 }

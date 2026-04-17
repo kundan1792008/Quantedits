@@ -1,365 +1,1000 @@
 "use client";
 
 /**
- * GenerativePipelinePanel
+ * GenerativePipelinePanel — AI prompt bar + pipeline management UI
  *
- * React UI for the on-device Generative Video Pipeline.
- * Lets the user drop/paste a reference frame, adjust generation
- * parameters, run on-device inference via the NPUEngine plugin, and
- * preview the generated frame sequence on a <canvas>.
+ * Features:
+ *   - Text prompt input with send button
+ *   - Live AI operation queue with progress indicators
+ *   - Style picker (style transfer)
+ *   - Quick-action buttons (Remove BG, Auto Color, Upscale)
+ *   - Export dialog with format/quality/resolution selectors
+ *   - Auto-save status indicator
  */
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  type FormEvent,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Cpu, Play, Square, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
-import { generativePipeline, GenerativePipeline, type GenerationProgress, type GenerationResult } from "@/services/GenerativePipeline";
-import { memoryManager } from "@/services/MemoryManager";
-import type { MemoryStats } from "@/plugins/npu-engine/definitions";
+import {
+  Sparkles,
+  Send,
+  X,
+  Download,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  Image as ImageIcon,
+  Palette,
+  ZoomIn,
+  Wand2,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Film,
+  Clock,
+  HardDrive,
+} from "lucide-react";
+import {
+  type AIJob,
+  type AIOperationType,
+  STYLE_LIBRARY,
+  aiEditService,
+} from "@/services/AIEditService";
+import {
+  type ExportFormat,
+  type ExportResolution,
+  type ExportProgress,
+  RESOLUTION_PRESETS,
+  FORMAT_PRESETS,
+  estimateFileSizeMB,
+  estimateExportTimeSec,
+  getFileExtension,
+  exportService,
+} from "@/services/ExportService";
+import type { Track } from "@/engine/TimelineRenderer";
 
-// ── Status badge helpers ──────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────
 
-function statusLabel(status: GenerationProgress["status"]): string {
-  switch (status) {
-    case "loading_models": return "Loading NPU models…";
-    case "encoding":       return "VAE encoding…";
-    case "diffusing":      return "Diffusion";
-    case "decoding":       return "VAE decoding…";
-    case "complete":       return "Complete";
-    case "aborted":        return "Aborted";
-    case "error":          return "Error";
-    default:               return "Idle";
-  }
+interface GenerativePipelinePanelProps {
+  tracks?: Track[];
+  durationSec?: number;
+  projectId?: string;
+  onPromptGenerate?: (prompt: string) => void;
+  onAutoSave?: () => void;
 }
+
+interface JobDisplay {
+  id: string;
+  type: AIOperationType;
+  status: AIJob["status"];
+  progress: number;
+  label: string;
+}
+
+// ── Helper labels ─────────────────────────────────────────────────────────
+
+// AI_OP_LABELS is available for consumers to import
+export const AI_OP_LABELS: Record<AIOperationType, string> = {
+  REMOVE_BACKGROUND: "Remove Background",
+  GENERATIVE_FILL: "Generative Fill",
+  STYLE_TRANSFER: "Style Transfer",
+  UPSCALE: "Upscale",
+  AUTO_COLOR: "Auto Colour",
+};
+
+const AI_OP_ICONS: Record<
+  AIOperationType,
+  React.ComponentType<{ size?: number; className?: string }>
+> = {
+  REMOVE_BACKGROUND: ImageIcon,
+  GENERATIVE_FILL: Wand2,
+  STYLE_TRANSFER: Palette,
+  UPSCALE: ZoomIn,
+  AUTO_COLOR: RefreshCw,
+};
 
 // ── Component ─────────────────────────────────────────────────────────────
 
-export default function GenerativePipelinePanel() {
-  const [status, setStatus] = useState<GenerationProgress["status"]>("idle");
-  const [progress, setProgress] = useState<GenerationProgress | null>(null);
-  const [result, setResult] = useState<GenerationResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [memStats, setMemStats] = useState<MemoryStats | null>(null);
-  const [frameIndex, setFrameIndex] = useState(0);
+export default function GenerativePipelinePanel({
+  tracks = [],
+  durationSec = 60,
+  projectId,
+  onPromptGenerate,
+  onAutoSave,
+}: GenerativePipelinePanelProps) {
+  const [prompt, setPrompt] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [jobs, setJobs] = useState<JobDisplay[]>([]);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
+  const [showStylePicker, setShowStylePicker] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [collapsed, setCollapsed] = useState(false);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  void autoSaveTimerRef; // ref used by auto-save cleanup effect
 
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const animFrameRef = useRef<number>(0);
-  const framesRef = useRef<string[]>([]);
-
-  // ── Memory stats subscription ──────────────────────────────────────────
+  // ── Auto-save ─────────────────────────────────────────────────────────
 
   useEffect(() => {
-    memoryManager.start().catch(console.error);
-    const unsub = memoryManager.onPressureChange(setMemStats);
-    return unsub;
-  }, []);
+    if (!onAutoSave) return;
+    const INTERVAL = 30_000;
+    const id = setInterval(() => {
+      setAutoSaveStatus("saving");
+      setTimeout(() => {
+        onAutoSave();
+        setAutoSaveStatus("saved");
+        setTimeout(() => setAutoSaveStatus("idle"), 3000);
+      }, 600);
+    }, INTERVAL);
+    return () => clearInterval(id);
+  }, [onAutoSave]);
 
-  // ── Frame preview animation ───────────────────────────────────────────
+  // ── AI job subscriptions ──────────────────────────────────────────────
 
   useEffect(() => {
-    if (!result || result.framesBase64.length === 0) return;
-    framesRef.current = result.framesBase64;
+    const unsubProgress = aiEditService.onAnyProgress((jobId, progress) => {
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === jobId ? { ...j, progress } : j,
+        ),
+      );
+    });
 
-    // Advance frame index at ~24 fps, driven by requestAnimationFrame so the
-    // loop automatically pauses when the tab is hidden (no wasted CPU/GPU).
-    const fps = 24;
-    const frameDurationMs = 1000 / fps;
-    let lastTimestamp = 0;
-    let fi = 0;
-
-    const tick = (timestamp: number) => {
-      if (timestamp - lastTimestamp >= frameDurationMs) {
-        fi = (fi + 1) % framesRef.current.length;
-        setFrameIndex(fi);
-        lastTimestamp = timestamp;
-      }
-      animFrameRef.current = requestAnimationFrame(tick);
-    };
-
-    animFrameRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animFrameRef.current);
-  }, [result]);
-
-  // Render current frame to canvas
-  useEffect(() => {
-    const canvas = previewCanvasRef.current;
-    if (!canvas || !result) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const frameB64 = result.framesBase64[frameIndex];
-    if (!frameB64) return;
-
-    // Decode base64 Float32 RGBA → ImageData
-    try {
-      const binary = atob(frameB64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const f32 = new Float32Array(bytes.buffer);
-
-      const w = result.width;
-      const h = result.height;
-      canvas.width  = w;
-      canvas.height = h;
-
-      const imgData = ctx.createImageData(w, h);
-      for (let i = 0; i < f32.length && i < imgData.data.length; i++) {
-        imgData.data[i] = Math.max(0, Math.min(255, Math.round(f32[i] * 255)));
-      }
-      ctx.putImageData(imgData, 0, 0);
-    } catch {
-      // Frames may be stubs (empty base64) on web — draw a placeholder
-      ctx.fillStyle = "#1a1a2e";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "#7C3AED88";
-      ctx.font = "12px monospace";
-      ctx.fillText(`Frame ${frameIndex + 1}/${result.framesBase64.length}`, 8, 20);
-    }
-  }, [result, frameIndex]);
-
-  // ── Generation ────────────────────────────────────────────────────────
-
-  const handleGenerate = useCallback(async () => {
-    setError(null);
-    setResult(null);
-    setFrameIndex(0);
-
-    // Build a 512×512 placeholder source frame (grey noise) for demo purposes.
-    // In production the user selects a video frame via a file picker.
-    const size = 512;
-    const f32 = new Float32Array(3 * size * size);
-    for (let i = 0; i < f32.length; i++) f32[i] = Math.random() * 0.2 + 0.1;
-    const bytes = new Uint8Array(f32.buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const sourceFrameBase64 = btoa(binary);
-
-    try {
-      const genResult = await generativePipeline.generate(
-        {
-          sourceFrameBase64,
-          sourceWidth:   size,
-          sourceHeight:  size,
-          frameCount:    14,
-          diffusionSteps: 20,
-          motionStrength: 0.85,
-          preferredBackend: "ane",
-        },
-        (prog) => {
-          setProgress(prog);
-          setStatus(prog.status);
-        },
+    const unsubComplete = aiEditService.onAnyComplete((jobId, result, error) => {
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === jobId
+            ? {
+                ...j,
+                status: error
+                  ? "FAILED"
+                  : result === null
+                    ? "CANCELLED"
+                    : "DONE",
+                progress: result ? 100 : j.progress,
+              }
+            : j,
+        ),
       );
 
-      GenerativePipeline.assertWithinBudget(genResult.peakMemoryBytes);
-      setResult(genResult);
-      setStatus("complete");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
-      setStatus("error");
-    }
+      // Auto-remove completed/failed jobs after 4 seconds
+      setTimeout(() => {
+        setJobs((prev) => prev.filter((j) => j.id !== jobId));
+      }, 4000);
+    });
+
+    return () => {
+      unsubProgress();
+      unsubComplete();
+    };
   }, []);
 
-  const handleStop = useCallback(() => {
-    // Signal abort via memory pressure — pipeline checks this flag each step
-    setStatus("aborted");
-    setError("Generation cancelled.");
+  // ── Prompt submission ─────────────────────────────────────────────────
+
+  const handleSubmit = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const text = prompt.trim();
+      if (!text || isSubmitting) return;
+
+      setIsSubmitting(true);
+      try {
+        onPromptGenerate?.(text);
+
+        if (projectId) {
+          await fetch("/api/v1/edits/generate-timeline", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: text, projectId, durationSec }),
+          });
+        }
+
+        setPrompt("");
+      } finally {
+        setIsSubmitting(false);
+        promptRef.current?.focus();
+      }
+    },
+    [prompt, isSubmitting, onPromptGenerate, projectId, durationSec],
+  );
+
+  // ── Quick actions ─────────────────────────────────────────────────────
+
+  const addDemoJob = useCallback(
+    (type: AIOperationType, label: string) => {
+      // In production, pass actual frameData. Here we enqueue a placeholder.
+      const placeholder = {
+        data: new Uint8ClampedArray(4),
+        width: 1,
+        height: 1,
+      };
+
+      let jobId: string;
+      switch (type) {
+        case "REMOVE_BACKGROUND":
+          jobId = aiEditService.removeBackground(placeholder);
+          break;
+        case "AUTO_COLOR":
+          jobId = aiEditService.autoColor(placeholder);
+          break;
+        case "UPSCALE":
+          jobId = aiEditService.upscale(placeholder, 2);
+          break;
+        case "STYLE_TRANSFER":
+          jobId = aiEditService.styleTransfer(
+            placeholder,
+            selectedStyle ?? "style-cyberpunk",
+          );
+          break;
+        case "GENERATIVE_FILL":
+          jobId = aiEditService.generativeFill(
+            placeholder,
+            new Uint8ClampedArray(1),
+            prompt || "seamless background fill",
+          );
+          break;
+        default:
+          jobId = aiEditService.removeBackground(placeholder);
+      }
+
+      setJobs((prev) => [
+        ...prev,
+        {
+          id: jobId,
+          type,
+          status: "PENDING",
+          progress: 0,
+          label,
+        },
+      ]);
+    },
+    [selectedStyle, prompt],
+  );
+
+  const handleCancelJob = useCallback((jobId: string) => {
+    aiEditService.cancel(jobId);
+    setJobs((prev) => prev.filter((j) => j.id !== jobId));
   }, []);
 
-  const isRunning = ["loading_models", "encoding", "diffusing", "decoding"].includes(status);
+  // ── Prompt key handler ────────────────────────────────────────────────
+
+  const handlePromptKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void handleSubmit(e as unknown as FormEvent);
+      }
+    },
+    [handleSubmit],
+  );
 
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
     <div
-      className="rounded-2xl overflow-hidden"
+      className="flex flex-col"
+      style={{
+        background: "#0D0D11",
+        borderTop: "1px solid #1E1E2E",
+      }}
+    >
+      {/* Header */}
+      <div
+        className="flex items-center gap-2 px-4 py-2 cursor-pointer select-none"
+        style={{ borderBottom: collapsed ? undefined : "1px solid #1E1E2E" }}
+        onClick={() => setCollapsed((c) => !c)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === "Enter" && setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
+      >
+        <Sparkles size={12} className="text-purple-400" />
+        <span className="text-xs font-medium text-[#5a5a7a] uppercase tracking-widest flex-1">
+          AI Pipeline
+        </span>
+
+        {/* Auto-save status */}
+        <AnimatePresence mode="wait">
+          {autoSaveStatus !== "idle" && (
+            <motion.div
+              key={autoSaveStatus}
+              initial={{ opacity: 0, x: 4 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -4 }}
+              className="flex items-center gap-1"
+            >
+              {autoSaveStatus === "saving" ? (
+                <>
+                  <Loader2 size={10} className="text-[#5a5a7a] animate-spin" />
+                  <span className="text-[10px] text-[#5a5a7a]">Saving…</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={10} className="text-emerald-500" />
+                  <span className="text-[10px] text-emerald-500">Saved</span>
+                </>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Job count badge */}
+        {jobs.filter((j) => j.status === "RUNNING" || j.status === "PENDING").length > 0 && (
+          <span
+            className="text-[9px] font-mono px-1.5 py-0.5 rounded-full"
+            style={{ background: "#7C3AED30", color: "#a78bfa" }}
+          >
+            {jobs.filter((j) => j.status === "RUNNING" || j.status === "PENDING").length} running
+          </span>
+        )}
+
+        {collapsed ? <ChevronUp size={12} className="text-[#3a3a5a]" /> : <ChevronDown size={12} className="text-[#3a3a5a]" />}
+      </div>
+
+      <AnimatePresence>
+        {!collapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ overflow: "hidden" }}
+          >
+            <div className="flex flex-col gap-3 p-3">
+              {/* Quick actions */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <QuickActionButton
+                  label="Remove BG"
+                  icon={<ImageIcon size={10} />}
+                  onClick={() => addDemoJob("REMOVE_BACKGROUND", "Remove Background")}
+                />
+                <QuickActionButton
+                  label="Auto Colour"
+                  icon={<RefreshCw size={10} />}
+                  onClick={() => addDemoJob("AUTO_COLOR", "Auto Colour")}
+                />
+                <QuickActionButton
+                  label="Upscale 2×"
+                  icon={<ZoomIn size={10} />}
+                  onClick={() => addDemoJob("UPSCALE", "Upscale 2×")}
+                />
+                <QuickActionButton
+                  label={selectedStyle ? STYLE_LIBRARY[selectedStyle]?.name ?? "Style" : "Style…"}
+                  icon={<Palette size={10} />}
+                  onClick={() => setShowStylePicker((o) => !o)}
+                  active={showStylePicker}
+                />
+                <QuickActionButton
+                  label="Gen Fill"
+                  icon={<Wand2 size={10} />}
+                  onClick={() => addDemoJob("GENERATIVE_FILL", "Generative Fill")}
+                />
+
+                {/* Export button */}
+                <button
+                  onClick={() => setShowExportDialog(true)}
+                  className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors"
+                  style={{
+                    background: "#7C3AED",
+                    color: "#fff",
+                  }}
+                >
+                  <Download size={10} />
+                  Export
+                </button>
+              </div>
+
+              {/* Style picker */}
+              <AnimatePresence>
+                {showStylePicker && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex flex-wrap gap-1.5 pb-1">
+                      {Object.entries(STYLE_LIBRARY).map(([id, style]) => (
+                        <button
+                          key={id}
+                          onClick={() => {
+                            setSelectedStyle(id);
+                            setShowStylePicker(false);
+                            addDemoJob("STYLE_TRANSFER", `Style: ${style.name}`);
+                          }}
+                          title={style.description}
+                          className="text-[10px] px-2 py-1 rounded transition-colors"
+                          style={{
+                            background:
+                              selectedStyle === id ? "#7C3AED20" : "#13131A",
+                            border: `1px solid ${
+                              selectedStyle === id ? "#7C3AED" : "#1E1E2E"
+                            }`,
+                            color:
+                              selectedStyle === id ? "#a78bfa" : "#5a5a7a",
+                          }}
+                        >
+                          {style.name}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Job queue */}
+              <AnimatePresence>
+                {jobs.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex flex-col gap-1.5"
+                  >
+                    {jobs.map((job) => (
+                      <JobRow key={job.id} job={job} onCancel={handleCancelJob} />
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Prompt bar */}
+              <form onSubmit={handleSubmit} className="relative">
+                <textarea
+                  ref={promptRef}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={handlePromptKeyDown}
+                  placeholder="Describe an edit, effect, or style… (Enter to send)"
+                  rows={2}
+                  className="w-full resize-none text-xs px-3 py-2 pr-10 rounded-lg outline-none transition-colors"
+                  style={{
+                    background: "#13131A",
+                    border: "1px solid #1E1E2E",
+                    color: "#E8E8F0",
+                    lineHeight: 1.5,
+                  }}
+                  disabled={isSubmitting}
+                />
+                <button
+                  type="submit"
+                  disabled={!prompt.trim() || isSubmitting}
+                  className="absolute right-2 bottom-2 w-6 h-6 flex items-center justify-center rounded transition-all"
+                  style={{
+                    background:
+                      prompt.trim() && !isSubmitting ? "#7C3AED" : "transparent",
+                    color:
+                      prompt.trim() && !isSubmitting ? "#fff" : "#3a3a5a",
+                  }}
+                >
+                  {isSubmitting ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Send size={11} />
+                  )}
+                </button>
+              </form>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Export dialog */}
+      <AnimatePresence>
+        {showExportDialog && (
+          <ExportDialog
+            tracks={tracks}
+            durationSec={durationSec}
+            projectId={projectId}
+            onClose={() => setShowExportDialog(false)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ── QuickActionButton ─────────────────────────────────────────────────────
+
+function QuickActionButton({
+  label,
+  icon,
+  onClick,
+  active = false,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors"
+      style={{
+        background: active ? "#1E1E40" : "#13131A",
+        border: `1px solid ${active ? "#3a3a6a" : "#1E1E2E"}`,
+        color: active ? "#a78bfa" : "#5a5a7a",
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+// ── JobRow ────────────────────────────────────────────────────────────────
+
+function JobRow({
+  job,
+  onCancel,
+}: {
+  job: JobDisplay;
+  onCancel: (id: string) => void;
+}) {
+  const Icon = AI_OP_ICONS[job.type];
+
+  const statusColor: Record<AIJob["status"], string> = {
+    PENDING: "#5a5a7a",
+    RUNNING: "#a78bfa",
+    DONE: "#10b981",
+    FAILED: "#ef4444",
+    CANCELLED: "#3a3a5a",
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 8 }}
+      className="flex items-center gap-2 rounded-lg px-2 py-1.5"
       style={{
         background: "#13131A",
         border: "1px solid #1E1E2E",
       }}
     >
-      {/* Header */}
-      <div
-        className="flex items-center gap-2 px-4 py-3 border-b"
-        style={{ borderColor: "#1E1E2E" }}
-      >
-        <Cpu size={13} className="text-purple-400" />
-        <span className="text-xs font-semibold text-[#E8E8F0] tracking-wide">
-          Generative Pipeline
-        </span>
-        <span className="text-[10px] text-[#3a3a5a] ml-1">NPU · On-device</span>
+      {/* Icon */}
+      <span style={{ color: statusColor[job.status], flexShrink: 0 }}>
+        <Icon size={11} />
+      </span>
 
-        {/* Memory pressure indicator */}
-        {memStats && (
-          <div className="ml-auto flex items-center gap-1.5">
-            <div
-              className="w-1.5 h-1.5 rounded-full"
-              style={{
-                background:
-                  memStats.pressureLevel === "critical" ? "#ef4444"
-                  : memStats.pressureLevel === "serious"  ? "#f97316"
-                  : memStats.pressureLevel === "fair"     ? "#eab308"
-                  : "#22c55e",
-              }}
+      {/* Label + progress */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span
+            className="text-[10px] font-mono truncate"
+            style={{ color: "#E8E8F0" }}
+          >
+            {job.label}
+          </span>
+          <span
+            className="text-[9px] font-mono shrink-0"
+            style={{ color: statusColor[job.status] }}
+          >
+            {job.status === "DONE"
+              ? "Done"
+              : job.status === "FAILED"
+                ? "Failed"
+                : job.status === "CANCELLED"
+                  ? "—"
+                  : `${job.progress}%`}
+          </span>
+        </div>
+
+        {(job.status === "RUNNING" || job.status === "PENDING") && (
+          <div
+            className="mt-1 h-0.5 rounded-full overflow-hidden"
+            style={{ background: "#1E1E2E" }}
+          >
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: "#7C3AED" }}
+              initial={{ width: 0 }}
+              animate={{ width: `${job.progress}%` }}
+              transition={{ duration: 0.3 }}
             />
-            <span className="text-[9px] text-[#5a5a7a] font-mono">
-              {(memStats.usedBytes / 1e9).toFixed(2)} GB
-            </span>
           </div>
         )}
       </div>
 
-      {/* Body */}
-      <div className="p-4 flex flex-col gap-3">
-        {/* Status row */}
-        <div className="flex items-center gap-2 h-6">
-          <AnimatePresence mode="wait">
-            {isRunning ? (
+      {/* Status icon / cancel */}
+      <div className="shrink-0">
+        {job.status === "DONE" && (
+          <CheckCircle size={11} className="text-emerald-500" />
+        )}
+        {job.status === "FAILED" && (
+          <AlertCircle size={11} className="text-red-500" />
+        )}
+        {job.status === "RUNNING" && (
+          <Loader2 size={11} className="text-purple-400 animate-spin" />
+        )}
+        {(job.status === "PENDING" || job.status === "RUNNING") && (
+          <button
+            onClick={() => onCancel(job.id)}
+            className="ml-1 text-[#2a2a4a] hover:text-[#5a5a7a] transition-colors"
+          >
+            <X size={10} />
+          </button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ── ExportDialog ──────────────────────────────────────────────────────────
+
+function ExportDialog({
+  tracks,
+  durationSec,
+  projectId: _projectId,
+  onClose,
+}: {
+  tracks: Track[];
+  durationSec: number;
+  projectId?: string;
+  onClose: () => void;
+}) {
+  const [format, setFormat] = useState<ExportFormat>("mp4");
+  const [resolution, setResolution] = useState<ExportResolution>("1080p");
+  const [quality, setQuality] = useState(80);
+  const [fps, setFps] = useState<24 | 30 | 60>(30);
+  const [progress, setProgress] = useState<ExportProgress | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [outputUrl, setOutputUrl] = useState<string | null>(null);
+  const currentJobId = useRef<string | null>(null);
+
+  const estimatedSizeMB = estimateFileSizeMB(durationSec, format, resolution, quality);
+  const estimatedTimeSec = estimateExportTimeSec(durationSec, resolution, fps);
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setProgress(null);
+    setOutputUrl(null);
+
+    const jobId = await exportService.export(
+      {
+        projectId: _projectId ?? "local",
+        tracks,
+        durationSec,
+        format,
+        resolution,
+        fps,
+        quality,
+        watermark: !_projectId ? "Quantedits — quantedits.io" : undefined,
+        includeAudio: true,
+      },
+      (p) => {
+        setProgress(p);
+        if (p.status === "DONE" && p.outputUrl) {
+          setOutputUrl(p.outputUrl);
+          setIsExporting(false);
+        }
+        if (p.status === "FAILED" || p.status === "CANCELLED") {
+          setIsExporting(false);
+        }
+      },
+    );
+
+    currentJobId.current = jobId;
+  };
+
+  const handleCancel = () => {
+    if (currentJobId.current) {
+      exportService.cancel(currentJobId.current);
+    }
+    setIsExporting(false);
+  };
+
+  const handleDownload = () => {
+    if (!outputUrl) return;
+    const a = document.createElement("a");
+    a.href = outputUrl;
+    a.download = `quantedits-export.${getFileExtension(format)}`;
+    a.click();
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <motion.div
+        initial={{ scale: 0.92, y: 12 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.92, y: 12 }}
+        transition={{ type: "spring", stiffness: 380, damping: 32 }}
+        className="rounded-2xl overflow-hidden"
+        style={{
+          background: "#13131A",
+          border: "1px solid #1E1E2E",
+          width: "min(480px, 94vw)",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.6)",
+        }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center gap-2 px-5 py-3"
+          style={{ borderBottom: "1px solid #1E1E2E" }}
+        >
+          <Film size={14} className="text-purple-400" />
+          <span className="text-sm font-semibold text-[#E8E8F0]">
+            Export Video
+          </span>
+          <button
+            onClick={onClose}
+            className="ml-auto text-[#3a3a5a] hover:text-[#8888aa] transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 flex flex-col gap-5">
+          {/* Format */}
+          <SettingSection label="Format">
+            <div className="grid grid-cols-3 gap-2">
+              {FORMAT_PRESETS.map((preset) => (
+                <button
+                  key={preset.value}
+                  onClick={() => !preset.pro && setFormat(preset.value)}
+                  disabled={isExporting || preset.pro}
+                  title={preset.description}
+                  className="flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-center transition-colors relative"
+                  style={{
+                    background:
+                      format === preset.value ? "#7C3AED20" : "#0D0D11",
+                    border: `1px solid ${
+                      format === preset.value ? "#7C3AED" : "#1E1E2E"
+                    }`,
+                    color:
+                      format === preset.value
+                        ? "#a78bfa"
+                        : preset.pro
+                          ? "#2a2a4a"
+                          : "#5a5a7a",
+                    opacity: preset.pro ? 0.6 : 1,
+                  }}
+                >
+                  <span className="text-xs font-medium">{preset.label}</span>
+                  {preset.pro && (
+                    <span
+                      className="text-[8px] px-1 py-0.5 rounded absolute -top-1 -right-1"
+                      style={{ background: "#F59E0B", color: "#000" }}
+                    >
+                      PRO
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </SettingSection>
+
+          {/* Resolution */}
+          <SettingSection label="Resolution">
+            <div className="grid grid-cols-3 gap-2">
+              {RESOLUTION_PRESETS.map((preset) => (
+                <button
+                  key={String(preset.value)}
+                  onClick={() => setResolution(preset.value)}
+                  disabled={isExporting}
+                  title={preset.description}
+                  className="px-2 py-2 rounded-lg text-xs text-center transition-colors"
+                  style={{
+                    background:
+                      resolution === preset.value ? "#7C3AED20" : "#0D0D11",
+                    border: `1px solid ${
+                      resolution === preset.value ? "#7C3AED" : "#1E1E2E"
+                    }`,
+                    color:
+                      resolution === preset.value ? "#a78bfa" : "#5a5a7a",
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </SettingSection>
+
+          {/* FPS + Quality */}
+          <div className="grid grid-cols-2 gap-4">
+            <SettingSection label="Frame Rate">
+              <div className="flex gap-2">
+                {([24, 30, 60] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setFps(f)}
+                    disabled={isExporting}
+                    className="flex-1 py-1.5 rounded-lg text-xs transition-colors"
+                    style={{
+                      background: fps === f ? "#7C3AED20" : "#0D0D11",
+                      border: `1px solid ${fps === f ? "#7C3AED" : "#1E1E2E"}`,
+                      color: fps === f ? "#a78bfa" : "#5a5a7a",
+                    }}
+                  >
+                    {f}fps
+                  </button>
+                ))}
+              </div>
+            </SettingSection>
+
+            <SettingSection label={`Quality: ${quality}%`}>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={quality}
+                onChange={(e) => setQuality(Number(e.target.value))}
+                disabled={isExporting}
+                className="w-full accent-violet-500 h-1"
+              />
+            </SettingSection>
+          </div>
+
+          {/* Estimates */}
+          <div
+            className="rounded-lg px-3 py-2 flex items-center gap-4"
+            style={{ background: "#0D0D11", border: "1px solid #1E1E2E" }}
+          >
+            <div className="flex items-center gap-1.5">
+              <HardDrive size={11} className="text-[#5a5a7a]" />
+              <span className="text-[11px] text-[#5a5a7a]">
+                ~{estimatedSizeMB < 1
+                  ? `${Math.round(estimatedSizeMB * 1000)}KB`
+                  : `${estimatedSizeMB.toFixed(0)}MB`}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Clock size={11} className="text-[#5a5a7a]" />
+              <span className="text-[11px] text-[#5a5a7a]">
+                ~{estimatedTimeSec < 60
+                  ? `${Math.round(estimatedTimeSec)}s`
+                  : `${Math.round(estimatedTimeSec / 60)}m`}
+              </span>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <AnimatePresence>
+            {progress && (
               <motion.div
-                key="running"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex items-center gap-1.5"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
               >
-                <Loader2 size={12} className="text-purple-400 animate-spin" />
-                <span className="text-[11px] text-purple-300 font-mono">
-                  {statusLabel(status)}
-                  {progress?.status === "diffusing" && progress.step !== undefined
-                    ? ` ${progress.step}/${progress.totalSteps}`
-                    : ""}
-                </span>
-              </motion.div>
-            ) : status === "complete" ? (
-              <motion.div
-                key="complete"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex items-center gap-1.5"
-              >
-                <CheckCircle2 size={12} className="text-emerald-400" />
-                <span className="text-[11px] text-emerald-400 font-mono">
-                  {result
-                    ? `${result.framesBase64.length} frames · ${result.totalMs.toFixed(0)} ms · ${result.backend}`
-                    : "Complete"}
-                </span>
-              </motion.div>
-            ) : status === "error" || status === "aborted" ? (
-              <motion.div
-                key="error"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex items-center gap-1.5"
-              >
-                <AlertTriangle size={12} className="text-red-400" />
-                <span className="text-[11px] text-red-400 font-mono truncate max-w-[220px]">
-                  {error ?? "Error"}
-                </span>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="idle"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex items-center gap-1.5"
-              >
-                <span className="text-[11px] text-[#3a3a5a] font-mono">
-                  Idle · ready to generate
-                </span>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span style={{ color: "#E8E8F0" }}>
+                      {progress.status === "PREPARING"
+                        ? "Preparing…"
+                        : progress.status === "ENCODING"
+                          ? `Encoding frame ${progress.framesEncoded}/${progress.totalFrames}`
+                          : progress.status === "FINALISING"
+                            ? "Finalising…"
+                            : progress.status === "DONE"
+                              ? "Complete!"
+                              : progress.status === "FAILED"
+                                ? `Failed: ${progress.errorMessage ?? "Unknown error"}`
+                                : "Cancelled"}
+                    </span>
+                    <span style={{ color: "#5a5a7a" }}>
+                      {progress.progress}%
+                    </span>
+                  </div>
+                  <div
+                    className="h-1.5 rounded-full overflow-hidden"
+                    style={{ background: "#1E1E2E" }}
+                  >
+                    <motion.div
+                      className="h-full rounded-full"
+                      style={{
+                        background:
+                          progress.status === "DONE"
+                            ? "#10b981"
+                            : progress.status === "FAILED"
+                              ? "#ef4444"
+                              : "#7C3AED",
+                      }}
+                      animate={{ width: `${progress.progress}%` }}
+                      transition={{ duration: 0.3 }}
+                    />
+                  </div>
+                  {progress.etaSec !== null && progress.status === "ENCODING" && (
+                    <span className="text-[10px] text-[#3a3a5a]">
+                      ETA:{" "}
+                      {progress.etaSec < 60
+                        ? `${Math.round(progress.etaSec)}s`
+                        : `${Math.round(progress.etaSec / 60)}m ${Math.round(progress.etaSec % 60)}s`}
+                    </span>
+                  )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Diffusion progress bar */}
-        {progress?.status === "diffusing" &&
-          progress.step !== undefined &&
-          progress.totalSteps !== undefined && (
-          <div
-            className="h-1 rounded-full overflow-hidden"
-            style={{ background: "#1E1E2E" }}
-          >
-            <motion.div
-              className="h-full rounded-full"
-              style={{ background: "linear-gradient(90deg, #7C3AED, #06B6D4)" }}
-              initial={{ width: "0%" }}
-              animate={{ width: `${(progress.step / progress.totalSteps) * 100}%` }}
-              transition={{ duration: 0.2 }}
-            />
-          </div>
-        )}
-
-        {/* Frame preview canvas */}
-        <AnimatePresence>
-          {result && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="rounded-xl overflow-hidden"
-              style={{ border: "1px solid #1E1E2E" }}
-            >
-              <canvas
-                ref={previewCanvasRef}
-                className="w-full"
-                style={{ display: "block", imageRendering: "pixelated", maxHeight: "120px", objectFit: "contain" }}
-              />
-              <div
-                className="flex items-center justify-between px-3 py-1.5"
-                style={{ background: "#0D0D11" }}
-              >
-                <span className="text-[9px] text-[#3a3a5a] font-mono">
-                  {frameIndex + 1} / {result.framesBase64.length} frames
-                </span>
-                <span className="text-[9px] text-[#3a3a5a] font-mono">
-                  {result.width}×{result.height} · {(result.peakMemoryBytes / 1e6).toFixed(0)} MB peak
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Controls */}
-        <div className="flex gap-2">
+        {/* Footer */}
+        <div
+          className="flex items-center gap-2 px-5 py-3"
+          style={{ borderTop: "1px solid #1E1E2E" }}
+        >
           <button
-            onClick={isRunning ? handleStop : handleGenerate}
-            disabled={false}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all"
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-xs transition-colors"
             style={{
-              background: isRunning
-                ? "rgba(239,68,68,0.15)"
-                : "linear-gradient(135deg, #7C3AED22, #06B6D422)",
-              border: `1px solid ${isRunning ? "#ef444440" : "#7C3AED40"}`,
-              color: isRunning ? "#f87171" : "#a78bfa",
+              background: "#0D0D11",
+              border: "1px solid #1E1E2E",
+              color: "#5a5a7a",
             }}
           >
-            {isRunning ? (
-              <>
-                <Square size={11} />
-                Stop
-              </>
-            ) : (
-              <>
-                <Play size={11} />
-                Generate
-              </>
-            )}
+            {isExporting ? "Hide" : "Cancel"}
           </button>
-          {result && !isRunning && (
+
+          <div className="flex-1" />
+
+          {outputUrl ? (
             <button
-              onClick={handleGenerate}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all"
+              onClick={handleDownload}
+              className="px-4 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+              style={{ background: "#10b981", color: "#fff" }}
+            >
+              <Download size={12} />
+              Download
+            </button>
+          ) : isExporting ? (
+            <button
+              onClick={handleCancel}
+              className="px-4 py-2 rounded-lg text-xs transition-colors"
               style={{
-                background: "rgba(124,58,237,0.1)",
-                border: "1px solid #7C3AED30",
-                color: "#7C3AED",
+                background: "#ef444420",
+                border: "1px solid #ef4444",
+                color: "#ef4444",
               }}
             >
-              Re-run
+              Stop Export
+            </button>
+          ) : (
+            <button
+              onClick={handleExport}
+              className="px-4 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+              style={{ background: "#7C3AED", color: "#fff" }}
+            >
+              <Film size={12} />
+              Export Now
             </button>
           )}
         </div>
-      </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function SettingSection({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-[10px] font-medium text-[#5a5a7a] uppercase tracking-widest">
+        {label}
+      </span>
+      {children}
     </div>
   );
 }
