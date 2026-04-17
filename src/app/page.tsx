@@ -10,10 +10,13 @@ import HookGenerator, { type Highlight } from "@/components/HookGenerator";
 import PublishRouter from "@/components/PublishRouter";
 import ReelCapture from "@/components/ReelCapture";
 import Timeline from "@/components/Timeline";
+import WebGLTimeline from "@/components/WebGLTimeline";
+import GenerativePipelinePanel from "@/components/GenerativePipelinePanel";
 
 export default function Home() {
   const [droppedFile, setDroppedFile] = useState<DroppedFile | null>(null);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [playheadFraction, setPlayheadFraction] = useState(0);
 
   const handleFileDrop = useCallback((file: DroppedFile) => {
     setDroppedFile(file);
@@ -209,6 +212,15 @@ export default function Home() {
             >
               <ReelCapture />
             </motion.div>
+
+            {/* Generative Pipeline — NPU-accelerated on-device video generation */}
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+            >
+              <GenerativePipelinePanel />
+            </motion.div>
           </div>
         </div>
 
@@ -244,7 +256,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ── BOTTOM: Timeline ─────────────────────────────────────────────── */}
+      {/* ── BOTTOM: Timeline (WebGL hardware-accelerated) ────────────────────── */}
       <div
         style={{
           height: "180px",
@@ -252,9 +264,11 @@ export default function Home() {
           background: "#0D0D11",
         }}
       >
-        <Timeline
+        <WebGLTimeline
           highlights={highlights}
           fileName={droppedFile?.file.name}
+          playheadFraction={playheadFraction}
+          onScrub={setPlayheadFraction}
         />
       </div>
     </div>
