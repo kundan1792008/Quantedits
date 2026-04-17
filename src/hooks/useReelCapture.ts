@@ -79,7 +79,10 @@ export function useReelCapture(): [ReelCaptureState, ReelCaptureActions] {
       expressionListenerRef.current?.remove();
       auraListenerRef.current?.remove();
       rewardListenerRef.current?.remove();
-      quantneon.deactivate();
+      // Only deactivate the aura if it was activated during this session
+      if (quantneon.getState().active) {
+        quantneon.deactivate();
+      }
     };
   }, []);
 

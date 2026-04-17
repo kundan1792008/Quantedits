@@ -4,7 +4,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // to the deployed Next.js origin (e.g. https://app.quantedits.io) before
 // running `npx cap sync`.  When the variable is absent the app falls back to
 // bundled static assets (requires `next build && next export`).
-const SERVER_URL = process.env.CAPACITOR_SERVER_URL;
+const capacitorServerUrl = process.env.CAPACITOR_SERVER_URL;
 
 const config: CapacitorConfig = {
   appId: "com.quantedits.app",
@@ -15,7 +15,7 @@ const config: CapacitorConfig = {
     androidScheme: "https",
     // When a server URL is provided, the native WebView loads the live Next.js
     // app so that all API routes (/api/v1/*) remain reachable from the device.
-    ...(SERVER_URL ? { url: SERVER_URL } : {}),
+    ...(capacitorServerUrl ? { url: capacitorServerUrl } : {}),
   },
   plugins: {
     Camera: {
