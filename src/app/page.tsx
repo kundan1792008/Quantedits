@@ -258,7 +258,10 @@ export default function Home() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.4 }}
                 >
-                  <MusicStudio />
+                  <MusicStudio
+                    durationSec={droppedFile?.durationEstimate ? parseFloat(droppedFile.durationEstimate) : 30}
+                    fileName={droppedFile?.file.name}
+                  />
                 </motion.div>
 
                 {/* Engagement: honest quality, suggestions, streak, estimates, templates */}
@@ -454,7 +457,10 @@ export default function Home() {
                   <ReelCapture />
                 </motion.div>
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-                  <MusicStudio />
+                  <MusicStudio
+                    durationSec={droppedFile?.durationEstimate ? parseFloat(droppedFile.durationEstimate) : 30}
+                    fileName={droppedFile?.file.name}
+                  />
                 </motion.div>
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
                   <EngagementPanel

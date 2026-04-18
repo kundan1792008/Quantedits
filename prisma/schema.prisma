@@ -132,7 +132,7 @@ enum RenderJobStatus {
   FAILED
 }
 
-// ── Engagement: Creation Streaks ───────────────────────────────────────────
+// ── Tracks ──────────────────────────────────────────────────────────────────
 // Neutral, opt-in streak counter. No false claims about algorithmic boost;
 // visibility is determined solely by Quanttube's ranking, never by streak.
 model CreationStreak {
