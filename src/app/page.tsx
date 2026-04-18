@@ -7,11 +7,11 @@ import Topbar from "@/components/Topbar";
 import VideoDropZone, { type DroppedFile } from "@/components/VideoDropZone";
 import DeepDub from "@/components/DeepDub";
 import HookGenerator, { type Highlight } from "@/components/HookGenerator";
+import MusicStudio from "@/components/MusicStudio";
 import PublishRouter from "@/components/PublishRouter";
 import ReelCapture from "@/components/ReelCapture";
 import WebGLTimeline from "@/components/WebGLTimeline";
 import GenerativePipelinePanel from "@/components/GenerativePipelinePanel";
-import MusicStudio from "@/components/MusicStudio";
 import type { Track } from "@/engine/TimelineRenderer";
 
 export default function Home() {
