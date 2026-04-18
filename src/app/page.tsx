@@ -7,6 +7,7 @@ import Topbar from "@/components/Topbar";
 import VideoDropZone, { type DroppedFile } from "@/components/VideoDropZone";
 import DeepDub from "@/components/DeepDub";
 import HookGenerator, { type Highlight } from "@/components/HookGenerator";
+import MusicStudio from "@/components/MusicStudio";
 import PublishRouter from "@/components/PublishRouter";
 import ReelCapture from "@/components/ReelCapture";
 import WebGLTimeline from "@/components/WebGLTimeline";
@@ -249,6 +250,14 @@ export default function Home() {
                 >
                   <ReelCapture />
                 </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                >
+                  <MusicStudio />
+                </motion.div>
               </div>
             </div>
 
@@ -419,6 +428,9 @@ export default function Home() {
                 </motion.div>
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
                   <ReelCapture />
+                </motion.div>
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+                  <MusicStudio />
                 </motion.div>
               </div>
             </div>
