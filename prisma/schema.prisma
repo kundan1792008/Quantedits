@@ -13,29 +13,42 @@ datasource db {
 // ── Users ──────────────────────────────────────────────────────────────────
 // Populated from the Quantmail JWT on first login (biometric SSO).
 model User {
-  id          String       @id @default(cuid())
-  quantmailId String       @unique
-  email       String       @unique
-  displayName String
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  projects    Project[]
-  assets      Asset[]
+  id                String             @id @default(cuid())
+  quantmailId       String             @unique
+  email             String             @unique
+  displayName       String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  projects          Project[]
+  assets            Asset[]
+  streak            CreationStreak?
+  suggestions       AiSuggestion[]
+  pushSubscriptions PushSubscription[]
+  preferences       UserPreferences?
+  publishedVideos   PublishedVideo[]
 }
 
 // ── Projects ───────────────────────────────────────────────────────────────
 model Project {
-  id          String      @id @default(cuid())
-  userId      String
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title       String
-  description String?
-  status      ProjectStatus @default(DRAFT)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  timelines   Timeline[]
-  renderJobs  RenderJob[]
-  exportJobs  ExportJob[]
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  status          ProjectStatus     @default(DRAFT)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  lastOpenedAt    DateTime          @default(now())
+  timelines       Timeline[]
+  renderJobs      RenderJob[]
+  exportJobs      ExportJob[]
+  qualityChecks   QualityCheckRun[]
+  suggestions     AiSuggestion[]
+  reminders       DraftReminder[]
+  publishedVideos PublishedVideo[]
+
+  @@index([userId, status])
+  @@index([userId, lastOpenedAt])
 }
 
 enum ProjectStatus {
@@ -48,16 +61,16 @@ enum ProjectStatus {
 // ── Timelines ──────────────────────────────────────────────────────────────
 // Stores a structured JSON timeline produced by the Prompt-to-Timeline API.
 model Timeline {
-  id          String    @id @default(cuid())
-  projectId   String
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  prompt      String
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  prompt    String
   /// Structured JSON compatible with video-editor timeline formats.
-  data        Json
-  version     Int       @default(1)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  tracks      Track[]
+  data      Json
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tracks    Track[]
 }
 
 // ── Assets ─────────────────────────────────────────────────────────────────
@@ -99,17 +112,17 @@ enum AssetSource {
 
 // ── RenderJobs ─────────────────────────────────────────────────────────────
 model RenderJob {
-  id          String          @id @default(cuid())
-  projectId   String
-  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  status      RenderJobStatus @default(QUEUED)
-  progress    Int             @default(0)
-  outputUrl   String?
-  errorMsg    String?
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  id         String          @id @default(cuid())
+  projectId  String
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status     RenderJobStatus @default(QUEUED)
+  progress   Int             @default(0)
+  outputUrl  String?
+  errorMsg   String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
 }
 
 enum RenderJobStatus {
@@ -117,6 +130,197 @@ enum RenderJobStatus {
   PROCESSING
   DONE
   FAILED
+}
+
+// ── Tracks ──────────────────────────────────────────────────────────────────
+// Neutral, opt-in streak counter. No false claims about algorithmic boost;
+// visibility is determined solely by Quanttube's ranking, never by streak.
+model CreationStreak {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak  Int      @default(0)
+  longestStreak  Int      @default(0)
+  /// UTC date (YYYY-MM-DD) of the last day the user created or updated a project.
+  lastActiveDate String?
+  /// When true, user has explicitly opted in to streak tracking.
+  enabled        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ── Engagement: Quality Checks ─────────────────────────────────────────────
+// Real, completable quality criteria (can reach 100%). Transparent and
+// deterministic — no artificial caps.
+model QualityCheckRun {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  score     Int // 0–100, inclusive. 100 is reachable.
+  /// Per-rule results — see services/engagement/qualityChecker.ts for the schema.
+  results   Json
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+// ── Engagement: AI Suggestions ─────────────────────────────────────────────
+// Contextual, dismissible editing suggestions. Each suggestion references a
+// concrete rule evaluated by the suggestion engine.
+model AiSuggestion {
+  id        String               @id @default(cuid())
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String?
+  project   Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  ruleId    String
+  title     String
+  body      String
+  severity  AiSuggestionSeverity @default(INFO)
+  status    AiSuggestionStatus   @default(PENDING)
+  /// Arbitrary per-rule context (e.g. detected audio LUFS, cut count).
+  context   Json?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([userId, status])
+  @@index([projectId, status])
+}
+
+enum AiSuggestionSeverity {
+  INFO
+  RECOMMENDED
+  WARNING
+}
+
+enum AiSuggestionStatus {
+  PENDING
+  APPLIED
+  DISMISSED
+}
+
+// ── Engagement: Draft Reminders ────────────────────────────────────────────
+// Polite, opt-in, rate-limited reminders about unfinished projects.
+model DraftReminder {
+  id         String               @id @default(cuid())
+  projectId  String
+  project    Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  channel    DraftReminderChannel
+  sentAt     DateTime             @default(now())
+  /// Identifier (e.g. push subscription id or email message id) for audit.
+  externalId String?
+
+  @@index([projectId, sentAt])
+}
+
+enum DraftReminderChannel {
+  PUSH
+  EMAIL
+  IN_APP
+}
+
+// ── Engagement: Templates ──────────────────────────────────────────────────
+// Catalog of editor templates. Trend metrics are derived from real usage
+// counts; no fabricated "X creators used this today" numbers.
+model Template {
+  id              String         @id @default(cuid())
+  slug            String         @unique
+  title           String
+  description     String
+  category        String
+  /// Preview image URL (remote).
+  previewImageUrl String?
+  /// JSON body describing the template's effects, pacing, audio cues, etc.
+  body            Json
+  status          TemplateStatus @default(PUBLISHED)
+  publishedAt     DateTime       @default(now())
+  /// Total number of times this template has been applied by any user.
+  usageCount      Int            @default(0)
+  /// Usage count within the last 24 hours, recomputed by a scheduled job.
+  usageLast24h    Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status, usageLast24h])
+  @@index([category])
+}
+
+enum TemplateStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// ── Engagement: Push Subscriptions ─────────────────────────────────────────
+// Web Push API subscriptions, stored per device. Opt-in only.
+model PushSubscription {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String    @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime  @default(now())
+  /// When null the subscription is active; set to a date when unsubscribed.
+  revokedAt DateTime?
+
+  @@index([userId])
+}
+
+// ── Engagement: User Preferences ───────────────────────────────────────────
+// Central opt-in/opt-out store for all engagement features.
+model UserPreferences {
+  id                        String   @id @default(cuid())
+  userId                    String   @unique
+  user                      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Enable AI editing suggestions in the editor.
+  suggestionsEnabled        Boolean  @default(true)
+  /// Show the quality checklist in the editor sidebar.
+  qualityChecklistEnabled   Boolean  @default(true)
+  /// Show view estimates before export.
+  viewEstimatesEnabled      Boolean  @default(true)
+  /// Enable streak tracking and display.
+  streakEnabled             Boolean  @default(false)
+  /// Receive push reminders about unfinished projects.
+  draftReminderPushEnabled  Boolean  @default(false)
+  /// Receive email reminders about unfinished projects.
+  draftReminderEmailEnabled Boolean  @default(false)
+  /// Minimum hours a draft must be idle before a reminder is eligible.
+  draftReminderMinIdleHours Int      @default(72)
+  /// Maximum reminders per draft per calendar week.
+  draftReminderMaxPerWeek   Int      @default(1)
+  /// Quiet hours start (0–23, local user time).
+  quietHoursStart           Int      @default(22)
+  /// Quiet hours end (0–23, local user time).
+  quietHoursEnd             Int      @default(8)
+  /// IANA timezone string (e.g. "Asia/Kolkata"). Defaults to UTC.
+  timezone                  String   @default("UTC")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+// ── Engagement: Published Videos ───────────────────────────────────────────
+// Historical record of published videos and their real view counts, used to
+// ground the view-estimator. No fabricated numbers: if there's no history,
+// the estimator returns null.
+model PublishedVideo {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId    String?
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  platform     String
+  externalId   String
+  title        String
+  /// Real, observed view count from the publishing platform.
+  viewCount    Int      @default(0)
+  durationSec  Int?
+  publishedAt  DateTime
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([platform, externalId])
+  @@index([userId, publishedAt])
 }
 
 // ── Tracks ──────────────────────────────────────────────────────────────────
