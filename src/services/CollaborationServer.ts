@@ -1438,7 +1438,7 @@ export function createInMemoryPair(id = "mem"): {
 } {
   type Handler<T> = (v: T) => void;
   const mk = () => {
-    let open = true;
+    const open = true;
     const msgH = new Set<Handler<CollabMessage>>();
     const closeH = new Set<Handler<{ code: number; reason: string }>>();
     const errH = new Set<Handler<Error>>();
