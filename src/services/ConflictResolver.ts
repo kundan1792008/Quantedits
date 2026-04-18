@@ -85,7 +85,7 @@ export interface ConflictDiff {
 // ── Internal Helpers ───────────────────────────────────────────────────────
 
 function extractClipId(op: CRDTOperation): string | null {
-  const p = op.payload as Record<string, unknown>;
+  const p = op.payload as unknown as Record<string, unknown>;
   if (typeof p.clipId === "string") return p.clipId;
   if (typeof p.leftClipId === "string") return p.leftClipId;
   return null;

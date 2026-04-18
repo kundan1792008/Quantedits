@@ -620,7 +620,6 @@ export class CollaborationServer {
  * In the App Router, import this singleton so that state is shared
  * across hot-reload boundaries via the Node.js module cache.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const globalWithCollab = global as typeof globalThis & { _collabServer?: CollaborationServer };
 
 if (!globalWithCollab._collabServer) {
