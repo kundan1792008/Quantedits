@@ -17,6 +17,7 @@ import EngagementPanel from "@/components/EngagementPanel";
 import { createDefaultTracks, type Track } from "@/engine/TimelineRenderer";
 import {
   autoAssembler,
+  DEFAULT_DURATION_SEC,
   estimateDurationSeconds,
   parseTimecodeToSeconds,
   type AssemblyHookSignal,
@@ -345,7 +346,7 @@ export default function Home() {
                     durationSec={
                       droppedFile
                         ? estimateDurationSeconds(droppedFile.durationEstimate)
-                        : 30
+                        : DEFAULT_DURATION_SEC
                     }
                     fileName={droppedFile?.file.name}
                   />

@@ -48,7 +48,7 @@ export interface PredictiveAssemblyPlan {
   tracks: Track[];
 }
 
-const DEFAULT_DURATION_SEC = 45;
+export const DEFAULT_DURATION_SEC = 45;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -146,7 +146,7 @@ function getAudioBed(intent: string, pacingProfile: PredictiveAssemblyPlan["paci
   return `Mid-tempo rhythm bed for ${intent}`;
 }
 
-function normaliseHooks(
+function normalizeHooks(
   durationSec: number,
   hooks: AssemblyHookSignal[],
 ): AssemblyHookSignal[] {
@@ -184,6 +184,10 @@ function normaliseHooks(
       confidence: clamp(82 - index * 6, 58, 92),
     };
   });
+}
+
+function computeTrimOutSec(sourceDurationSec: number, sourceEndSec: number): number {
+  return Math.max(0, sourceDurationSec - sourceEndSec);
 }
 
 function buildSourceWindows(
@@ -250,7 +254,7 @@ function createClip(
 export class AutoAssembler {
   buildPlan(input: AutoAssemblerInput): PredictiveAssemblyPlan {
     const sourceDurationSec = clamp(input.durationSec, 8, 14_400);
-    const hooks = normaliseHooks(sourceDurationSec, input.hooks ?? []);
+    const hooks = normalizeHooks(sourceDurationSec, input.hooks ?? []);
     const intent = inferIntent(input.fileName, input.prompt);
     const pacingProfile = inferPacingProfile(
       sourceDurationSec,
@@ -309,7 +313,7 @@ export class AutoAssembler {
           cursor,
           endSec,
           sourceWindow.startSec,
-          Math.max(0, sourceDurationSec - sourceWindow.endSec),
+          computeTrimOutSec(sourceDurationSec, sourceWindow.endSec),
           `Scene ${index + 1}`,
           {
             opacity: 1,
@@ -345,7 +349,7 @@ export class AutoAssembler {
             brollStart,
             brollEnd,
             sourceWindow.startSec,
-            Math.max(0, sourceDurationSec - sourceWindow.endSec),
+            computeTrimOutSec(sourceDurationSec, sourceWindow.endSec),
             `Support cut ${Math.floor(index / 3) + 1}`,
             {
               opacity: 0.92,
