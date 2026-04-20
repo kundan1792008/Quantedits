@@ -10,7 +10,7 @@ import { verifyQuantmailJwt } from "@/lib/auth";
 
 const PROTECTED_PREFIX = "/api/v1";
 
-export function proxy(request: NextRequest): NextResponse {
+export default function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
 
   if (!pathname.startsWith(PROTECTED_PREFIX)) {
