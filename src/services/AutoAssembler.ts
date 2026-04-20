@@ -65,11 +65,11 @@ const JUMP_CUT_CADENCE: Record<PredictiveAssemblyPlan["pacingProfile"], number> 
   BALANCED: 3.1,
   CINEMATIC: 4.8,
 };
-const SILENCE_REDUCTION_BASE = 28;
-const SILENCE_REDUCTION_PER_HOOK = 6;
-const SILENCE_REDUCTION_FILESIZE_STEP_MB = 40;
-const MIN_SILENCE_REDUCTION_PCT = 24;
-const MAX_SILENCE_REDUCTION_PCT = 72;
+const SILENCE_REMOVAL_BASE = 28;
+const SILENCE_REMOVAL_PER_HOOK = 6;
+const SILENCE_REMOVAL_FILESIZE_STEP_MB = 40;
+const MIN_SILENCE_REMOVAL_PCT = 24;
+const MAX_SILENCE_REMOVAL_PCT = 72;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -205,7 +205,10 @@ function normalizeHooks(
   });
 }
 
-function computeTrimOutSec(sourceDurationSec: number, sourceEndSec: number): number {
+function computeTailDurationSec(
+  sourceDurationSec: number,
+  sourceEndSec: number,
+): number {
   return Math.max(0, sourceDurationSec - sourceEndSec);
 }
 
@@ -289,11 +292,11 @@ export class AutoAssembler {
     const segmentLength = SEGMENT_LENGTHS[pacingProfile];
     const segmentCount = Math.max(4, Math.round(targetDurationSec / segmentLength));
     const silenceReductionPct = clamp(
-      SILENCE_REDUCTION_BASE +
-        hooks.length * SILENCE_REDUCTION_PER_HOOK +
-        Math.round(input.fileSizeMB / SILENCE_REDUCTION_FILESIZE_STEP_MB),
-      MIN_SILENCE_REDUCTION_PCT,
-      MAX_SILENCE_REDUCTION_PCT,
+      SILENCE_REMOVAL_BASE +
+        hooks.length * SILENCE_REMOVAL_PER_HOOK +
+        Math.round(input.fileSizeMB / SILENCE_REMOVAL_FILESIZE_STEP_MB),
+      MIN_SILENCE_REMOVAL_PCT,
+      MAX_SILENCE_REMOVAL_PCT,
     );
     const jumpCutCadenceSec = JUMP_CUT_CADENCE[pacingProfile];
     const audioBed = getAudioBed(intent, pacingProfile);
@@ -303,9 +306,34 @@ export class AutoAssembler {
       hooks,
     );
     const tracks = createDefaultTracks(input.timelineId);
-    const [primaryTrack, brollTrack, audioTrack, musicTrack, textTrack, effectTrack] =
-      tracks;
+    const primaryTrack = tracks.find((track) =>
+      track.id.endsWith("track-video-1"),
+    );
+    const brollTrack = tracks.find((track) =>
+      track.id.endsWith("track-video-2"),
+    );
+    const audioTrack = tracks.find((track) =>
+      track.id.endsWith("track-audio-1"),
+    );
+    const musicTrack = tracks.find((track) =>
+      track.id.endsWith("track-audio-2"),
+    );
+    const textTrack = tracks.find((track) => track.id.endsWith("track-text"));
+    const effectTrack = tracks.find((track) =>
+      track.id.endsWith("track-effects"),
+    );
     const segments: AssemblySegment[] = [];
+
+    if (
+      !primaryTrack ||
+      !brollTrack ||
+      !audioTrack ||
+      !musicTrack ||
+      !textTrack ||
+      !effectTrack
+    ) {
+      throw new Error("Default timeline tracks are incomplete");
+    }
 
     let cursor = 0;
     for (let index = 0; index < sourceWindows.length; index += 1) {
@@ -331,7 +359,7 @@ export class AutoAssembler {
           cursor,
           endSec,
           sourceWindow.startSec,
-          computeTrimOutSec(sourceDurationSec, sourceWindow.endSec),
+          computeTailDurationSec(sourceDurationSec, sourceWindow.endSec),
           `Scene ${index + 1}`,
           {
             opacity: 1,
@@ -367,7 +395,7 @@ export class AutoAssembler {
             brollStart,
             brollEnd,
             sourceWindow.startSec,
-            computeTrimOutSec(sourceDurationSec, sourceWindow.endSec),
+            computeTailDurationSec(sourceDurationSec, sourceWindow.endSec),
             `Support cut ${Math.floor(index / 3) + 1}`,
             {
               opacity: 0.92,

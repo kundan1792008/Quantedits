@@ -38,6 +38,7 @@ const RETENTION_SCORE_WEIGHTS = {
   pacing: 0.34,
   silenceReduction: 0.28,
 } as const;
+const MIN_DURATION_FOR_4K_SEC = 240;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -93,7 +94,7 @@ function buildExportRecommendation(
   plan: PredictiveAssemblyPlan,
 ): ExportRecommendation {
   const resolution: ExportResolution =
-    plan.sourceDurationSec > 240 ? "4k" : "1080p";
+    plan.sourceDurationSec > MIN_DURATION_FOR_4K_SEC ? "4k" : "1080p";
   const fps: 24 | 30 | 60 =
     plan.pacingProfile === "CINEMATIC"
       ? 24
