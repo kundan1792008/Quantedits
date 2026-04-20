@@ -22,6 +22,14 @@ export interface WithdrawalReceipt {
   remainingOffChainBalance: number;
 }
 
+export interface VaultTransferReceipt {
+  id: string;
+  userId: string;
+  amount: number;
+  transferredAt: string;
+  remainingOffChainBalance: number;
+}
+
 export const FRACTIONAL_VALUES: Record<MicroInteractionType, number> = {
   like: 0.001,
   watch_10s: 0.005,
@@ -90,6 +98,27 @@ export class TokenEngine {
       destinationWallet,
       amount: normalizedAmount,
       synchronizedAt: new Date().toISOString(),
+      remainingOffChainBalance: account.balance,
+    };
+  }
+
+  transferToVault(userId: string, amount: number): VaultTransferReceipt {
+    const normalizedAmount = Number(Math.max(0, amount).toFixed(6));
+    const account = this.getOrCreateAccount(userId);
+    if (normalizedAmount === 0) {
+      throw new Error("Transfer amount must be greater than zero.");
+    }
+    if (normalizedAmount > account.balance) {
+      throw new Error("Insufficient off-chain balance.");
+    }
+
+    account.balance = Number((account.balance - normalizedAmount).toFixed(6));
+
+    return {
+      id: `vt-${crypto.randomUUID()}`,
+      userId,
+      amount: normalizedAmount,
+      transferredAt: new Date().toISOString(),
       remainingOffChainBalance: account.balance,
     };
   }

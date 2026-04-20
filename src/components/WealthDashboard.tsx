@@ -24,6 +24,9 @@ interface WealthState {
   lostPotential30d: number;
 }
 
+const sharedTokenEngine = new TokenEngine();
+const sharedVault = new AutoStakingVault();
+
 function formatTk(amount: number): string {
   return `${amount.toFixed(4)} TK`;
 }
@@ -47,8 +50,8 @@ export default function WealthDashboard({
   watch10sBlocks,
   comments,
 }: WealthDashboardProps) {
-  const tokenEngineRef = useRef(new TokenEngine());
-  const vaultRef = useRef(new AutoStakingVault());
+  const tokenEngineRef = useRef(sharedTokenEngine);
+  const vaultRef = useRef(sharedVault);
   const processedRef = useRef({ likes: 0, watch10sBlocks: 0, comments: 0 });
   const [state, setState] = useState<WealthState>({
     offChainBalance: 0,
@@ -91,6 +94,7 @@ export default function WealthDashboard({
 
     newlyEarned = Number(newlyEarned.toFixed(6));
     if (newlyEarned > 0) {
+      tokenEngineRef.current.transferToVault(userId, newlyEarned);
       vaultRef.current.deposit(userId, newlyEarned);
     }
 

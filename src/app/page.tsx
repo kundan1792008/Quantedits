@@ -312,7 +312,7 @@ export default function Home() {
                     userId="local-editor"
                     likes={highlights.length}
                     watch10sBlocks={watch10sBlocks}
-                    comments={droppedFile ? 1 : 0}
+                    comments={0}
                   />
                 </motion.div>
               </div>
@@ -516,7 +516,7 @@ export default function Home() {
                     userId="local-classic"
                     likes={highlights.length}
                     watch10sBlocks={watch10sBlocks}
-                    comments={droppedFile ? 1 : 0}
+                    comments={0}
                   />
                 </motion.div>
               </div>
