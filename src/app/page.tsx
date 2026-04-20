@@ -13,8 +13,21 @@ import ReelCapture from "@/components/ReelCapture";
 import WebGLTimeline from "@/components/WebGLTimeline";
 import GenerativePipelinePanel from "@/components/GenerativePipelinePanel";
 import EngagementPanel from "@/components/EngagementPanel";
+import WealthDashboard from "@/components/WealthDashboard";
 import type { Track } from "@/engine/TimelineRenderer";
 import type { ProjectProbe } from "@/services/engagement/types";
+
+function durationLabelToSeconds(label: string | undefined): number {
+  if (!label) return 0;
+  const match = label.match(/(\d+(?:\.\d+)?)/);
+  if (!match) return 0;
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const normalized = label.toLowerCase();
+  if (normalized.includes("hr")) return amount * 60 * 60;
+  if (normalized.includes("min")) return amount * 60;
+  return amount;
+}
 
 export default function Home() {
   const [droppedFile, setDroppedFile] = useState<DroppedFile | null>(null);
@@ -48,6 +61,10 @@ export default function Home() {
     // In production: the response would populate new timeline tracks
     void prompt;
   }, []);
+  const estimatedDurationSec = durationLabelToSeconds(
+    droppedFile?.durationEstimate,
+  );
+  const watch10sBlocks = Math.max(0, Math.floor(estimatedDurationSec / 10));
 
   return (
     <div
@@ -285,6 +302,19 @@ export default function Home() {
                     }
                   />
                 </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.55 }}
+                >
+                  <WealthDashboard
+                    userId="local-editor"
+                    likes={highlights.length}
+                    watch10sBlocks={watch10sBlocks}
+                    comments={0}
+                  />
+                </motion.div>
               </div>
             </div>
 
@@ -477,6 +507,18 @@ export default function Home() {
                     }
                   />
                 </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.55 }}
+                >
+                  <WealthDashboard
+                    userId="local-classic"
+                    likes={highlights.length}
+                    watch10sBlocks={watch10sBlocks}
+                    comments={0}
+                  />
+                </motion.div>
               </div>
             </div>
 
@@ -523,4 +565,3 @@ export default function Home() {
     </div>
   );
 }
-
